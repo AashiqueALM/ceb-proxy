@@ -12,13 +12,17 @@ app.get("/ceb", async (req, res) => {
 
     try {
         const browser = await puppeteer.launch({
-            headless: false, // IMPORTANT: CEB blocks headless mode
+            headless: "new", // REQUIRED for Render
             executablePath: "/usr/bin/chromium",
             args: [
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled"
+                "--disable-blink-features=AutomationControlled",
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+                "--disable-features=IsolateOrigins,site-per-process",
+                "--window-size=1280,800"
             ]
         });
 
@@ -28,6 +32,20 @@ app.get("/ceb", async (req, res) => {
         await page.evaluateOnNewDocument(() => {
             Object.defineProperty(navigator, "webdriver", {
                 get: () => false
+            });
+        });
+
+        // Fake plugins
+        await page.evaluateOnNewDocument(() => {
+            Object.defineProperty(navigator, "plugins", {
+                get: () => [1, 2, 3]
+            });
+        });
+
+        // Fake languages
+        await page.evaluateOnNewDocument(() => {
+            Object.defineProperty(navigator, "languages", {
+                get: () => ["en-US", "en"]
             });
         });
 
@@ -46,9 +64,7 @@ app.get("/ceb", async (req, res) => {
             if (req.url().includes("/instantpay/validate") && req.method() === "POST") {
                 try {
                     validateResponse = await req.response().json();
-                } catch (e) {
-                    // ignore JSON parse errors
-                }
+                } catch (e) {}
             }
         });
 
@@ -71,7 +87,6 @@ app.get("/ceb", async (req, res) => {
             return res.json({ error: "CEB did not return bill data" });
         }
 
-        // Build response
         const data = {
             name: validateResponse?.accountHolderName || null,
             balance: validateResponse?.billBalance || null,
