@@ -25,16 +25,42 @@ app.get("/ceb", async (req, res) => {
         await page.setUserAgent("Mozilla/5.0");
         await page.setViewport({ width: 1280, height: 800 });
 
+        // STEP 1: Load page
         await page.goto("https://payment.ceb.lk/instantpay", {
             waitUntil: "networkidle2"
         });
 
-        await page.type("#account_no", account);
-        await page.click("#btnSubmit");
+        // STEP 2: Extract hidden fields
+        const hidden = await page.evaluate(() => {
+            return {
+                token: document.querySelector("input[name='token']")?.value || null,
+                uniqueOrderId: document.querySelector("input[name='uniqueOrderId']")?.value || null
+            };
+        });
 
-        await page.waitForTimeout(2000);
-        await page.waitForSelector(".col-md-6", { timeout: 20000 });
+        // STEP 3: Submit REAL POST request
+        await page.setRequestInterception(true);
 
+        page.once("request", intercepted => {
+            intercepted.continue({
+                method: "POST",
+                postData: new URLSearchParams({
+                    account_no: account,
+                    token: hidden.token,
+                    uniqueOrderId: hidden.uniqueOrderId
+                }).toString(),
+                headers: {
+                    ...intercepted.headers(),
+                    "Content-Type": "application/x-www-form-urlencoded"
+                }
+            });
+        });
+
+        await page.goto("https://payment.ceb.lk/instantpay/validate", {
+            waitUntil: "networkidle2"
+        });
+
+        // STEP 5: Scrape results
         const data = await page.evaluate(() => {
             const getValue = (label) => {
                 const rows = [...document.querySelectorAll(".col-md-6")];
