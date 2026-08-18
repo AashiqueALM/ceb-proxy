@@ -25,42 +25,45 @@ app.get("/ceb", async (req, res) => {
         await page.setUserAgent("Mozilla/5.0");
         await page.setViewport({ width: 1280, height: 800 });
 
-        // STEP 1: Load page
+        let realRequest = null;
+
+        await page.setRequestInterception(true);
+
+        page.on("request", req => {
+            if (req.url().includes("/instantpay/validate") && req.method() === "POST") {
+                realRequest = {
+                    url: req.url(),
+                    method: req.method(),
+                    postData: req.postData(),
+                    headers: req.headers()
+                };
+            }
+            req.continue();
+        });
+
         await page.goto("https://payment.ceb.lk/instantpay", {
             waitUntil: "networkidle2"
         });
 
-        // STEP 2: Extract hidden fields
-        const hidden = await page.evaluate(() => {
-            return {
-                token: document.querySelector("input[name='token']")?.value || null,
-                uniqueOrderId: document.querySelector("input[name='uniqueOrderId']")?.value || null
-            };
-        });
+        await page.type("#account_no", account);
+        await page.click("#btnSubmit");
 
-        // STEP 3: Submit REAL POST request
-        await page.setRequestInterception(true);
+        await page.waitForTimeout(3000);
 
-        page.once("request", intercepted => {
-            intercepted.continue({
-                method: "POST",
-                postData: new URLSearchParams({
-                    account_no: account,
-                    token: hidden.token,
-                    uniqueOrderId: hidden.uniqueOrderId
-                }).toString(),
-                headers: {
-                    ...intercepted.headers(),
-                    "Content-Type": "application/x-www-form-urlencoded"
-                }
-            });
-        });
+        if (!realRequest) {
+            await browser.close();
+            return res.json({ error: "CEB did not generate a validate request" });
+        }
 
-        await page.goto("https://payment.ceb.lk/instantpay/validate", {
+        await page.goto(realRequest.url, {
+            method: "POST",
+            headers: realRequest.headers,
+            postData: realRequest.postData,
             waitUntil: "networkidle2"
         });
 
-        // STEP 5: Scrape results
+        await page.waitForSelector(".col-md-6", { timeout: 20000 });
+
         const data = await page.evaluate(() => {
             const getValue = (label) => {
                 const rows = [...document.querySelectorAll(".col-md-6")];
@@ -84,5 +87,4 @@ app.get("/ceb", async (req, res) => {
         res.json({ error: err.message });
     }
 });
-
 app.listen(3000, () => console.log("CEB Proxy running on port 3000"));
