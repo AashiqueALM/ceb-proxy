@@ -12,6 +12,4 @@
   "puppeteer": {
     "executablePath": "/usr/bin/chromium"
   }
-
-  }
 }
