@@ -12,17 +12,31 @@ app.get("/ceb", async (req, res) => {
 
     try {
         const browser = await puppeteer.launch({
-            headless: true,
+            headless: false, // IMPORTANT: CEB blocks headless mode
             executablePath: "/usr/bin/chromium",
             args: [
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage"
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled"
             ]
         });
 
         const page = await browser.newPage();
-        await page.setUserAgent("Mozilla/5.0");
+
+        // Remove webdriver fingerprint
+        await page.evaluateOnNewDocument(() => {
+            Object.defineProperty(navigator, "webdriver", {
+                get: () => false
+            });
+        });
+
+        // Real Chrome user agent
+        await page.setUserAgent(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        );
+
         await page.setViewport({ width: 1280, height: 800 });
 
         let validateResponse = null;
@@ -30,24 +44,34 @@ app.get("/ceb", async (req, res) => {
         // Capture fetch() POST request
         page.on("requestfinished", async req => {
             if (req.url().includes("/instantpay/validate") && req.method() === "POST") {
-                validateResponse = await req.response().json();
+                try {
+                    validateResponse = await req.response().json();
+                } catch (e) {
+                    // ignore JSON parse errors
+                }
             }
         });
 
+        // Load page
         await page.goto("https://payment.ceb.lk/instantpay", {
             waitUntil: "networkidle2"
         });
 
+        // Type account number
         await page.type("#account_no", account);
+
+        // Click submit
         await page.click("#btnSubmit");
 
-        await page.waitForTimeout(3000);
+        // Wait for CEB to send fetch() request
+        await page.waitForTimeout(6000);
 
         if (!validateResponse) {
             await browser.close();
             return res.json({ error: "CEB did not return bill data" });
         }
 
+        // Build response
         const data = {
             name: validateResponse?.accountHolderName || null,
             balance: validateResponse?.billBalance || null,
